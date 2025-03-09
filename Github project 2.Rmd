@@ -1,0 +1,292 @@
+---
+title: "Statistical Modelling II on real Australian PBS contraceptive data "
+subtitle: "Time series analysis methods, visualizations, regression models, control series, predicted counterfactual "
+author: "Valerie Huanle Lin"
+output: 
+    github_document:
+        toc: true
+        toc_depth: 3
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+libs <- c("astsa","forecast","lmtest","zoo","readr")
+missing <- !libs %in% installed.packages()
+if (any(missing)) {
+  install.packages(libs[missing],repos="https://cloud.r-project.org")
+}
+```
+
+### Introduction Section
+
+**Introduction:** Oral contraceptives are commonly used by women to prevent unintended pregnancies and manage specific health issues (dysphoric disorder, dysmenorrhea, endometriosis). In May 2015, a study revealed that combined oral contraceptives, which contain both oestrogen and progestogen, might increase the risk of developing blood clots, including serious conditions like deep vein thrombosis, pulmonary embolism, and stroke. This report aims to investigate whether the attention the study received in the media had any impact on the distribution of subsidized combined contraceptives through the Australian PBS.
+
+The research data, available in contraceptives.csv, covers the time from January 2013 to December 2016. The dataset includes date, monthly counts for combined oral contraceptives and progestogen-only contraceptives. The upcoming sections will utilize time series analysis methods and visualizations to explore the raw data, identify any seasonal patterns, assess autocorrelation and delayed effects through statistical tests, establish variables to model changes post-media attention, employ regression models to analyze alterations in dispensing of combined oral contraceptives, plot the predicted counterfactual to visualize predicted changes, use a "control" series (dispensing of progestogen-only oral contraceptives) and discuss outcome.
+
+### Methods Selection
+
+**(1) Visualization to explore the raw data:**
+
+-   *Figure1* : shows monthly observed and seasonally adjusted of "combined" per 100,000 population in Australia each month from 2013 to end of 2016. The red dashed line marking introduction of media attention time point in May 2015. The legend indicates the blue line is the observed count, orange line is seasonally adjusted count.
+
+-   *Figure2* : shows monthly observed and trend of "mini" per 100,000 population in Australia each month from 2013 to end of 2016. The red dashed line marking introduction of media attention time point in May 2015. The legend indicates the blue line is the observed count, green line is trend count.
+
+```{r read-data, include=FALSE}
+df <- read.csv("data/contraceptives.csv", header=TRUE)
+str(df)
+summary(df)
+class(df) # df is a data frame
+```
+
+```{r visualization, echo=FALSE}
+# Create the time series object
+df_ts <- ts(df[, c("combined", "mini")], start=c(2013, 1), frequency=12)
+
+####################################################################################################################
+# Plot deseasoned 'combined' data and raw data together, indicating the media attention in may 2015
+deccom <- decompose(df_ts[, "combined"], type = "multiplicative")
+deseason_com <- df_ts/deccom$seasonal
+
+# Combine the original time series with the deseasoned time series 
+com01.d <- ts.union(df_ts[, "combined"], deseason_com)
+
+# Plot them both on the same graph
+par(cex.lab=.9,cex.axis=.9,cex.main=.9)
+plot(com01.d, plot.type="s", ylim=c(250, 350), col=c("deepskyblue3","orange"), lty=c("solid","dashed"), ylab="Combined dispensing per 100,000 population", xlab="Time(Month)", main="Figure 1. Monthly Observed and Seasonally Adjusted of “combined” per 100,000 population \n before and after introduction of media attention, 2013-2016, Australia")
+legend("topleft", legend=c("Observed Combined", "Seasonally adjusted"), col=c("deepskyblue3","orange"), lty=c("solid","dashed"),cex=.8)
+abline(v = 2015.42, col = 'red', lty = 'dashed',lwd=2)
+text(2015.85, 330, "Media Attention\n(May 2015)", col = 'red', cex=0.8)
+
+
+#########################################################################################################################
+#Plot trend 'mini' data and raw data together, indicating the media attention in may 2015
+decmini <- decompose(df_ts[, "mini"], type = "multiplicative")
+deseason_mini <- df_ts/decmini$seasonal
+com02.t <- ts.union(df_ts[, "mini"], decmini$trend)
+
+par(cex.lab=.9,cex.axis=.9,cex.main=.9)
+plot(com02.t, plot.type="s", ylim=c(10, 30), col=c("blue","green"), lty=c("solid","dashed"), ylab="Mini dispensing per 100,000 population", xlab="Time(Month)", main="Figure 2. Monthly Observed and Seasonally Adjusted of “Mini” per 100,000 population \n before and after introduction of media attention, 2013-2016, Australia")
+legend("topleft", legend=c("Observed Combined", "trend"), col=c("blue","green"), lty=c("solid","dashed"),cex=.8)
+abline(v = 2015.42, col = 'red', lty = 'dashed',lwd=2)
+text(2015.85, 27, "Media Attention\n(May 2015)", col = 'red', cex=0.8)
+
+
+```
+
+**(2) Explore seasonal effects, autocorrelation, and delayed impacts with statistics and tests:**
+
+Overall, the median 'Combined' dispensing per 100,000 population per month was 309.2 (interquartile range, 301.8 to 316.3).the median 'Mini' dispensing per 100,000 population per month was 22.95 (interquartile range, 22.18 to 23.52).
+
+-   *Trend of 'combined'*: The 'combined' has a increasing trend prior to the media attention(intervention) . After the intervention in May 2015, it started to decrease until the end of the study period in December 2016. The seasonal plot tells us that there is seasonality, there is repeated pattern from 2013 to end of 2016, and reached the lowest at the end of 2016. This suggests that the change in the count of 'combined' dispensing' in post-intervention might best be described by a change in slope. The tapply() function shows the lowest average count is in March with a mean of 288.8. The month with the highest average count is in June with a mean of 331.7 .
+
+-   *Seasonality of 'combined'*: The count appears lowest in March of each year, and at highest in June, but no other clear patterns are observed during the rest of the year. Thus seasonality will be included in regression models.
+
+-   *Outliers of 'combined'*: Mar 2013 (288.8 count per 100,000 population) and March 2014(295.4 count per 100,000 population) is lower than all other values. In contrast, the count of combined dispensing in June 2014 is highest (331.7 count per 100,000 population). However, these values don't appear extreme in the "random" panel of the decomposition plot, which is due to seasonal effects. And we won't discuss further due to the lack of background and evidence.
+
+------------------------------------------------------------------------
+
+-   *Trend of 'mini'*: The 'mini' has a very slow increasing/constant trend prior to the media attention(intervention) . After the intervention in May 2015, it started to increase rapidly until the end of the study period in December 2016. The seasonal plot tells us that there is seasonality, there is repeated pattern from 2013 to end of 2016. This suggests that the change in the count of 'mini' dispensing' in post-intervention might best be described by a change in slope. The tapply() function shows the lowest average count is in March with a mean of 21. The month with the highest average count is in September with a mean of 24.60 .
+
+-   *Seasonality of 'mini'*: The count appears lowest in March of each year, and at highest in September, but no other clear patterns are observed during the rest of the year. Thus seasonality will be included in regression models.
+
+-   *Outliers of 'mini'*: Mar 2013 (21 count per 100,000 population) is lower than all other values. In contrast, the count of mini dispensing in September 2014 is highest (24.2 count per 100,000 population). However, these values don't appear extreme in the "random" panel of the decomposition plot, which is due to seasonal effects. And we won't discuss further due to the lack of background and evidence.
+
+```{r, echo=FALSE, fig.height=3.5, fig.width=4}
+# Decomposition plots
+library(forecast)
+
+# Save the components of the decomposed series for combined and mini into two separate data
+# frame (call it 'combined').
+combined <- df_ts[, 1]
+# frame (call it 'mini').
+mini <- df_ts[, 2]
+
+# Decomposition plots
+library(forecast)
+par(mfrow=c(4,4), cex.main=.8, cex.lab=.8)
+plot(decompose(combined))
+plot(decompose(mini))
+
+# Seasonal plots
+ggseasonplot(combined)
+ggseasonplot(mini)
+```
+
+**(3) Choose the best segmented regression model to explore whether there was a change in combined oral contraceptive dispensing following the media attention**
+
+-   Some necessary vectors are created: `time` is the time since start of the study, `syg` is an indicator for intervention (before=0, after=1), `time.after` is the time since the media attention starts, `month` is a monthly dummy variable, and `syg.lag1` and `time.after.lag1` are `syg` and `time.after` delayed/lagged by one month.
+
+-   As potential seasonality is identified before, thus prefer to choose model 1 and 3 to include season. Model 1 and 3's AIC is the lowest (AIC=315.55) compared to model 2 and 4 (AIC=353.56). The Ljung-Box test shows both both model 2 & 4 has identified significant residual autocorrelation (p=1.084e-05), but not for models 1 and 3 (p=0.22). Thus models 2 and 4 are not great options.
+
+-   From the 8 diagrams of model1 and model3, it suggest residuals are normally distributed for a assumption of linear regression because residuals are not deviated from dotted line, a positive level shift in the dispensing of 'combined' after the intervention, simple linear trend, scale-location plot suggested residuals are equally distributed at all time points (see QQ plot) because it has less variance and less pattern, good residual vs fitted plot (not pattern and red line is less straight), residual vs leverage plot shows there is no extreme values having great impact on the regression,many values are below and above the red line.
+
+-   Both model1 and model3 have very small p-values and lowest AIC, and so does not help distinguish between models. Considering the nature of the intervention that the impact might be delayed, so model 3 has the best fitting. It adjusts for seasonality, also meet the assumption of linear regression that residuals are normally distributed with constant variance and no autocorrelation.
+
+```{r, include=FALSE}
+#create appropriate variables to model after the intervention
+#Time variable representing baseline slope
+time <- seq(1,length(combined))
+time <- ts(time, start=c(2013,1), frequency=12)
+time
+
+#Step change variable representing level shift post intervention
+syg <- ifelse(time(combined)<2015.42,0,1)
+syg <- ts(syg,start=c(2013,1), frequency=12)
+syg
+
+#Time since intervention representing change in slope
+time.after <- append(rep(0,sum(time(combined)<2015.42)),seq(1,sum(syg)))
+time.after <- ts(time.after, start=c(2013,1), frequency=12)
+time.after
+
+#Monthly dummy variables
+month <- seasonaldummy(combined)
+head(month)
+
+#Step change variable representing level shift post intervention lagged by one month
+syg.lag1 <- ifelse(time(combined)<2015.5,0,1)
+syg.lag1 <- ts(syg.lag1,start=c(2013,1), frequency=12)
+syg.lag1
+
+#Time since intervention representing change in slope lagged by one month
+time.after.lag1 <- append(rep(0,sum(time(combined)<2015.5)),seq(1,sum(time(combined)>=2015.5)))
+time.after.lag1 <- ts(time.after.lag1, start=c(2013,1), frequency=12)
+time.after.lag1
+```
+
+```{r use appropriate model, echo=FALSE}
+#Run models
+model1 <- lm(combined ~ time + syg + time.after + month)
+model2 <- lm(combined ~ time + syg + time.after)
+model3 <- lm(combined ~ time + syg.lag1 + time.after.lag1 + month)
+model4 <- lm(combined ~ time + syg.lag1 + time.after.lag1)
+
+#Check model fit using residual plots
+par(mfrow=c(2,2))
+plot(model1)
+mtext("Model 1 residual plots", side=3, outer=TRUE, line=-2)
+par(mfrow=c(2,2))
+plot(model2)
+mtext("Model 2 residual plots", side=3, outer=TRUE, line=-2)
+par(mfrow=c(2,2))
+plot(model3)
+mtext("Model 3 residual plots", side=3, outer=TRUE, line=-2)
+par(mfrow=c(2,2))
+plot(model4)
+mtext("Model 4 residual plots", side=3, outer=TRUE, line=-2)
+```
+
+**(4) Plot the predicted counterfactual to visualise any change in 'combined' dispensing following the media attention**
+
+-   From the diagram 'Observed VS Conterfactual Monthly Dispensing of combined in Australia (2013-2016)', we can see the predicted counterfactual is lower than observed dispensing of 'combined' from June 2015-Dec 2015, then counterfactual is slightly above the observed till the end of 2016. This implies that the media attention's impact may not be as strong as it was in 2015. It's a characteristic of media -- over time, people tend to forget.
+
+```{r Plot the predicted counterfactual to visualise any change in dispensing following the media attention, echo=FALSE}
+# Assuming combined and cf are time series objects
+combined <- df_ts[, 1]
+mini <- df_ts[, 2]
+
+# Create a data frame representing the intervention had it not occurred (call it "noint")
+noint <- data.frame(step = rep(0, length(combined)), after = rep(0, length(combined)))
+
+# Predict the series had the intervention NOT occurred using "predict()"
+cf <- predict(model3, newdata = noint)
+
+#cf should starts after the intervention
+cf <- ts(cf, start = c(2015, 5), end= c(2016, 12), frequency = 12)
+
+# Combine the original and counterfactual data
+combined.cf <- cbind(combined, cf)
+# Plot the negative control series
+plot(combined.cf, plot.type = "s", col = c("maroon", "lightblue"),
+     main = "Observed VS Conterfactual Monthly Dispensing \n of combined in Australia (2013-2016)",
+     ylab = "Monthly count of 'combined' dispensing", xlab = "Month", ylim = c(200, 350), xaxt = "n", cex = 0.8)
+
+# Add legend
+legend("bottomleft", legend = c("Observed", "Counterfactual"),
+       col = c("maroon", "lightblue"), lty = c(1, 1), cex = 0.8)
+
+# Add custom x-axis labels
+axis(1, time(combined), at=c(2015.5, 2016.00, 2017.00),
+     labels=c("May 2015","Jan 2016","Jan 2017"))
+
+# Add a vertical line for the intervention date
+abline(v = 2015.42, col = "grey30", lty = "longdash", lwd = 2)
+# Add text for media attention
+text(2015.78, 340, "Media Attention\n(May 2015)", col = 'grey30', cex = 0.8)
+
+```
+
+### Results Section
+
+-   Model 3 suggested that the media attention is associated with the decrease in the 'combined' oral contraceptive pill dispensing.The approach of incorporating 'month' is important for studying the effect of intervention. Before the intervention, the count of dispensing was increasing by 0.312 (95% CI 0.068 to 0.555) by each month. One month after the invention (June 2015), there is an immediate decrease in the outcome 'combined' dispensing, which is -7.802 (95% CI -14.957 to -0.648). Additionally, there is a sustained decrease in the 'combined' dispensing, which is supported by the negative coefficient for time.after -0.696 (95% CI -1.272 to -0.120) till end of 2016. In another word, the media attention has a slight change in the ongoing trend over time, with an decrease in the pre-intervention slope by -0.696. The new slope is 0.312-0.696 = -0.384. Thus we can conclude that the effect of media attention around the increased risk of thrombosis associated with 'combined' oral contraceptive has decreased pill dispensing immediately, but has moderate long term impact, considering the changes in the level shift and pre-intervention slope.
+
+### Discussion Section
+
+**Use the "control" series (dispensing of progestogen-only oral contraceptives)**
+
+\*Interrupted time series analysis faces a challenge, that there might be other confounding factors happening at the same time that could also be causing a change in the distribution of 'combined' oral contraceptives. For instance, there could be new laws or rules around the same time making it harder to get 'combined' oral contraceptives. Other confounding factors need to be considered when understanding changes in the dispensing of 'combined' oral contraceptives. In the paper (Rose et al., 2015), it said that levonorgestrel implant right after an abortion can significantly reduce the chances of getting pregnant again within two years and having another abortion within four years when compared to using oral contraceptives. Thus we expected to see more women choose implant method in 2015. However, in Nov 2012, a study from US has showed risk of venous thromboembolism among people who take oral contraceptive. DOI: 10.1097/aog.0b013e318277c93b. From the figure 1, we didn't see a constant decrease of 'combined' dispensing, which means media attention in May 2015 has effect.
+
+\*The first step in utilizing a negative control series involves examining whether there were any alterations in this series during the media attention in May 2015. We can use the "control" series, which represents the dispensing of progestogen-only oral contraceptives, it would be another outcome. If we notice a change in progestogen-only oral contraceptives dispensing that resembles the change in media attention time, it suggests factors other than media attention are at play. In such a case, we cannot definitively attribute the observed changes to media attention. Conversely, if the control series shows no change, it strengthens the evidence that the decline in 'combined' dispensing is linked to the intervention.
+
+-   Ideally, the negative control should closely resemble the population of interest, except for not being exposed to the intervention. An alternate negative control could involve examining the impact of progestogen-only oral contraceptives on breastfeeding performance and infant health outcomes. (Phillips et al., 2016). Another study conducted by 2015 concludes that progestogen-only oral contraceptives has a effect on reducing migraine. (Allais et al., 2015)
+
+### Appendix
+
+-   Check Four model's autocorrelation of residuals using Ljung-Box test, AIC, Parameter estimates and 95% CI
+
+```{r, echo=FALSE}
+#Check for autocorrelation of residuals using Ljung-Box test
+Box.test(model1$residuals, type='Ljung-Box', lag=12)
+Box.test(model2$residuals, type='Ljung-Box', lag=12)
+Box.test(model3$residuals, type='Ljung-Box', lag=12)
+Box.test(model4$residuals, type='Ljung-Box', lag=12)
+
+#Output AIC for all models
+AIC(model1)
+AIC(model2)
+AIC(model3)
+AIC(model4)
+
+#Parameter estimates and 95% CI for all models
+confint(model1)
+confint(model2)
+confint(model3)
+confint(model4)
+
+
+
+summary(model1)
+summary(model2)
+summary(model3)
+summary(model4)
+```
+
+-   Summary stats of combined
+
+```{r, echo=FALSE}
+############################################################################################
+#Summary stats of combined
+summary(combined)
+#Summary stats by month 
+tapply(combined, cycle(combined), summary)
+```
+
+-   Summary stats of mini
+
+```{r, echo=FALSE}
+#Summary stats of mini
+summary(mini)
+#Summary stats by month 
+tapply(mini, cycle(mini), summary)
+```
+
+### Reference
+
+Allais, G. et al. (2015) 'The use of progestogen-only pill in migraine patients', Expert Review of Neurotherapeutics, 16(1), pp. 71--82. <doi:10.1586/14737175.2016.1127161>.
+
+'Committee opinion no. 540' (2012) Obstetrics & Gynecology, 120(5), pp. 1239--1242. <doi:10.1097/aog.0b013e318277c93b>.
+
+Phillips, S.J. et al. (2016) 'Progestogen-only contraceptive use among breastfeeding women: A systematic review', Contraception, 94(3), pp. 226--252. <doi:10.1016/j.contraception.2015.09.010>.
+
+Rose, S.B., Garrett, S.M. and Stanley, J. (2015) 'Immediate postabortion initiation of levonorgestrel implants reduces the incidence of births and abortions at 2 years and beyond', Contraception, 92(1), pp. 17--25. <doi:10.1016/j.contraception.2015.03.012>.
